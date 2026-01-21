@@ -14,6 +14,7 @@ const EditGoalModal: React.FC<EditGoalModalProps> = ({ goal, onSave, onClose }) 
   const [startDate, setStartDate] = useState(goal.startDate || new Date().toISOString().split('T')[0]);
   const [targetDate, setTargetDate] = useState(goal.targetDate);
   const [isAchieved, setIsAchieved] = useState(goal.isAchieved || false);
+  const [achieveDate, setAchieveDate] = useState(goal.achieveDate || new Date().toISOString().split('T')[0]);
   const [moves, setMoves] = useState<MajorMove[]>(goal.majorMoves);
 
   const handleMoveChange = (id: string, value: string) => {
@@ -37,6 +38,7 @@ const EditGoalModal: React.FC<EditGoalModalProps> = ({ goal, onSave, onClose }) 
       startDate,
       targetDate,
       isAchieved,
+      achieveDate: isAchieved ? achieveDate : undefined,
       majorMoves: moves.filter(m => m.title.trim() !== '')
     });
   };
@@ -98,17 +100,32 @@ const EditGoalModal: React.FC<EditGoalModalProps> = ({ goal, onSave, onClose }) 
             </div>
           </div>
 
-          <div className="p-4 bg-emerald-50 rounded-xl border border-emerald-100 flex items-center gap-3">
-            <input
-              type="checkbox"
-              id="isAchieved"
-              checked={isAchieved}
-              onChange={(e) => setIsAchieved(e.target.checked)}
-              className="h-5 w-5 text-emerald-600 rounded focus:ring-emerald-500"
-            />
-            <label htmlFor="isAchieved" className="text-sm font-bold text-emerald-800 cursor-pointer">
-              Goal Achieved & Completed
-            </label>
+          <div className="p-4 bg-emerald-50 rounded-xl border border-emerald-100 space-y-3">
+            <div className="flex items-center gap-3">
+              <input
+                type="checkbox"
+                id="isAchieved"
+                checked={isAchieved}
+                onChange={(e) => setIsAchieved(e.target.checked)}
+                className="h-5 w-5 text-emerald-600 rounded focus:ring-emerald-500"
+              />
+              <label htmlFor="isAchieved" className="text-sm font-bold text-emerald-800 cursor-pointer">
+                Goal Achieved & Completed
+              </label>
+            </div>
+            
+            {isAchieved && (
+              <div className="animate-in slide-in-from-top-2 duration-200">
+                <label className="block text-xs font-bold text-emerald-700 uppercase mb-1">Achieve Date</label>
+                <input
+                  type="date"
+                  value={achieveDate}
+                  onChange={(e) => setAchieveDate(e.target.value)}
+                  className="w-full px-3 py-1.5 border border-emerald-200 rounded-lg outline-none focus:ring-2 focus:ring-emerald-500 bg-white"
+                  required
+                />
+              </div>
+            )}
           </div>
 
           <div>
