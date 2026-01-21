@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Goal, LogEntry } from './types';
 import GoalForm from './components/GoalForm';
 import Tracker from './components/Tracker';
@@ -75,6 +75,13 @@ const App: React.FC = () => {
     return () => clearTimeout(timeoutId);
   }, [goals, logs, isInitialLoading]);
 
+  const sortedGoals = useMemo(() => {
+    return [...goals].sort((a, b) => {
+      if (a.isAchieved === b.isAchieved) return 0;
+      return a.isAchieved ? 1 : -1;
+    });
+  }, [goals]);
+
   const handleSaveConfig = (e: React.FormEvent) => {
     e.preventDefault();
     DB.setCredentials(dbUrl, dbKey);
@@ -132,6 +139,21 @@ const App: React.FC = () => {
       return `${monthPart}${dayPart} left`;
     }
     return `${days} ${days === 1 ? 'day' : 'days'} left`;
+  };
+
+  const getTimeSpent = (startStr: string, endStr: string) => {
+    const start = new Date(startStr);
+    const end = new Date(endStr);
+    const diffTime = end.getTime() - start.getTime();
+    const diffDaysTotal = Math.max(0, Math.ceil(diffTime / (1000 * 60 * 60 * 24)));
+    
+    const months = Math.floor(diffDaysTotal / 30);
+    const days = diffDaysTotal % 30;
+    
+    if (months > 0) {
+      return `Achieved in ${months} ${months === 1 ? 'month' : 'months'}${days > 0 ? `, ${days} ${days === 1 ? 'day' : 'days'}` : ''}`;
+    }
+    return `Achieved in ${diffDaysTotal} ${diffDaysTotal === 1 ? 'day' : 'days'}`;
   };
 
   const startEditLog = (log: LogEntry) => {
@@ -203,31 +225,54 @@ const App: React.FC = () => {
               <GoalForm onAddGoal={addGoal} />
               <div className="space-y-4">
                 <h3 className="text-lg font-bold text-slate-800">Your Goals</h3>
-                {goals.length === 0 ? (
+                {sortedGoals.length === 0 ? (
                   <div className="bg-slate-50 border-2 border-dashed border-slate-200 rounded-xl p-12 text-center text-slate-400">
                     <p>Start your journey by adding your first goal above!</p>
                   </div>
                 ) : (
-                  goals.map(goal => {
+                  sortedGoals.map(goal => {
                     const countdown = getCountdown(goal.targetDate);
                     const isOverdue = countdown === "overdue";
                     
                     return (
-                      <div key={goal.id} className={`bg-white p-6 rounded-xl shadow-sm border transition-all ${goal.isAchieved ? 'border-emerald-200 bg-emerald-50/5' : 'border-slate-200 hover:border-indigo-200'}`}>
+                      <div 
+                        key={goal.id} 
+                        className={`bg-white p-6 rounded-xl shadow-sm border transition-all ${
+                          goal.isAchieved 
+                            ? 'border-emerald-200 bg-slate-100' 
+                            : 'border-slate-200 hover:border-indigo-200'
+                        }`}
+                      >
                         <div className="flex justify-between items-start mb-4">
                           <div className="flex-1 pr-4">
                             <div className="flex items-center gap-2 mb-1">
-                              <h4 className={`text-xl font-bold ${goal.isAchieved ? 'text-emerald-800 line-through opacity-60' : 'text-slate-800'}`}>{goal.title}</h4>
+                              <h4 className={`text-xl font-bold ${goal.isAchieved ? 'text-emerald-700' : 'text-slate-800'}`}>{goal.title}</h4>
                               {goal.isAchieved && (
-                                <span className="bg-emerald-100 text-emerald-700 text-[10px] font-black px-2 py-0.5 rounded-full uppercase tracking-tighter">Achieved</span>
+                                <span className="bg-emerald-100 text-emerald-700 text-[10px] font-black px-2 py-0.5 rounded-full uppercase tracking-tighter border border-emerald-200">Achieved</span>
                               )}
                             </div>
-                            <p className="text-sm text-slate-500 mb-3">{goal.description}</p>
-                            <div className="flex flex-wrap items-center gap-3">
+                            <p className={`text-sm mb-3 ${goal.isAchieved ? 'text-emerald-600' : 'text-slate-500'}`}>{goal.description}</p>
+                            
+                            <div className="flex flex-wrap items-center gap-y-2 gap-x-6 mb-4">
                               <div className="flex items-center gap-1.5">
-                                <span className="text-[10px] font-bold text-indigo-500 tracking-wider">Target:</span>
+                                <span className="text-[10px] font-bold tracking-wider text-slate-400 uppercase">Start:</span>
+                                <span className="text-[10px] font-bold text-slate-600">{new Date(goal.startDate).toLocaleDateString()}</span>
+                              </div>
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-[10px] font-bold tracking-wider text-slate-400 uppercase">Target:</span>
                                 <span className="text-[10px] font-bold text-slate-600">{new Date(goal.targetDate).toLocaleDateString()}</span>
                               </div>
+                              {goal.isAchieved && goal.achieveDate && (
+                                <>
+                                  <div className="flex items-center gap-1.5">
+                                    <span className="text-[10px] font-bold tracking-wider text-emerald-600 uppercase">Achieved:</span>
+                                    <span className="text-[10px] font-bold text-emerald-700">{new Date(goal.achieveDate).toLocaleDateString()}</span>
+                                  </div>
+                                  <div className="bg-emerald-500 text-white px-2 py-0.5 rounded text-[10px] font-black tracking-tight shadow-sm">
+                                    {getTimeSpent(goal.startDate, goal.achieveDate)}
+                                  </div>
+                                </>
+                              )}
                               {!goal.isAchieved && (
                                 <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-black tracking-tight shadow-sm border ${isOverdue ? 'bg-rose-50 text-rose-600 border-rose-100' : 'bg-amber-50 text-amber-700 border-amber-100'}`}>
                                   <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" viewBox="0 0 20 20" fill="currentColor">
@@ -251,8 +296,8 @@ const App: React.FC = () => {
                           {goal.majorMoves.map(move => {
                             const isInitiated = logs.some(l => l.goalId === goal.id && l.moveId === move.id);
                             return (
-                              <div key={move.id} className={`flex items-center gap-3 p-3 rounded-lg border transition-all ${isInitiated ? 'bg-indigo-50 border-indigo-100 text-indigo-900 shadow-sm' : 'bg-slate-50 border-slate-100 text-slate-500'}`}>
-                                <div className={`h-2 w-2 rounded-full ${isInitiated ? 'bg-indigo-500 shadow-[0_0_8px_rgba(79,70,229,0.4)]' : 'bg-slate-300'}`} />
+                              <div key={move.id} className={`flex items-center gap-3 p-3 rounded-lg border transition-all ${isInitiated ? (goal.isAchieved ? 'bg-emerald-50 border-emerald-200 text-emerald-800 shadow-sm' : 'bg-indigo-50 border-indigo-100 text-indigo-900 shadow-sm') : (goal.isAchieved ? 'bg-slate-200 border-slate-300 text-slate-500' : 'bg-slate-50 border-slate-100 text-slate-500')}`}>
+                                <div className={`h-2 w-2 rounded-full ${isInitiated ? (goal.isAchieved ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.4)]' : 'bg-indigo-500 shadow-[0_0_8px_rgba(79,70,229,0.4)]') : 'bg-slate-300'}`} />
                                 <span className="text-sm font-medium">{move.title}</span>
                               </div>
                             );
