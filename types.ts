@@ -12,6 +12,7 @@ export interface Goal {
   description: string;
   startDate: string;
   targetDate: string;
+  achieveDate?: string;
   majorMoves: MajorMove[];
   isAchieved?: boolean;
 }
