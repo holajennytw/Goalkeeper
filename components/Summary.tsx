@@ -1,5 +1,5 @@
 
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import { Goal, LogEntry, TimeView } from '../types';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 
@@ -10,94 +10,182 @@ interface SummaryProps {
   onEditLog: (log: LogEntry) => void;
 }
 
+const MultiSelect: React.FC<{
+  label: string;
+  options: { id: string; label: string }[];
+  selected: string[];
+  onChange: (selected: string[]) => void;
+}> = ({ label, options, selected, onChange }) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const isAllSelected = selected.length === options.length && options.length > 0;
+
+  const toggleAll = () => {
+    if (isAllSelected) {
+      onChange([]);
+    } else {
+      onChange(options.map(o => o.id));
+    }
+  };
+
+  const toggleOption = (id: string) => {
+    if (selected.includes(id)) {
+      onChange(selected.filter(item => item !== id));
+    } else {
+      onChange([...selected, id]);
+    }
+  };
+
+  return (
+    <div className="relative">
+      <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">{label}</label>
+      <div 
+        onClick={() => setIsOpen(!isOpen)}
+        className="w-full text-xs bg-white border border-slate-200 rounded-md p-2 outline-none cursor-pointer flex justify-between items-center min-h-[32px]"
+      >
+        <span className="truncate max-w-[120px]">
+          {selected.length === 0 ? 'None' : isAllSelected ? `All (${options.length})` : `${selected.length} Selected`}
+        </span>
+        <svg className={`h-3 w-3 transition-transform ${isOpen ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+        </svg>
+      </div>
+      
+      {isOpen && (
+        <>
+          <div className="fixed inset-0 z-10" onClick={() => setIsOpen(false)}></div>
+          <div className="absolute z-20 mt-1 w-full bg-white border border-slate-200 rounded-md shadow-lg max-h-48 overflow-y-auto">
+            <div 
+              onClick={toggleAll}
+              className="p-2 border-b border-slate-100 flex items-center gap-2 hover:bg-slate-50 cursor-pointer text-[11px] font-bold"
+            >
+              <input type="checkbox" checked={isAllSelected} readOnly className="h-3 w-3 rounded text-indigo-600" />
+              <span>Select All</span>
+            </div>
+            {options.length > 0 ? (
+              options.map(opt => (
+                <div 
+                  key={opt.id}
+                  onClick={() => toggleOption(opt.id)}
+                  className="p-2 flex items-center gap-2 hover:bg-slate-50 cursor-pointer text-[11px]"
+                >
+                  <input type="checkbox" checked={selected.includes(opt.id)} readOnly className="h-3 w-3 rounded text-indigo-600" />
+                  <span className="truncate">{opt.label}</span>
+                </div>
+              ))
+            ) : (
+              <div className="p-4 text-center text-slate-400 italic text-[10px]">No options available</div>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+};
+
 const Summary: React.FC<SummaryProps> = ({ goals, logs, onDeleteLog, onEditLog }) => {
   const [view, setView] = useState<TimeView>('total');
   
   // Filter States
-  const [goalFilter, setGoalFilter] = useState<string>('all');
-  const [moveFilter, setMoveFilter] = useState<string>('all');
-  const [monthFilter, setMonthFilter] = useState<string>('all');
-  const [quarterFilter, setQuarterFilter] = useState<string>('all');
-  const [yearFilter, setYearFilter] = useState<string>('all');
+  const [goalFilter, setGoalFilter] = useState<string[]>([]);
+  const [moveFilter, setMoveFilter] = useState<string[]>([]);
+  const [weekFilter, setWeekFilter] = useState<string[]>([]);
+  const [monthFilter, setMonthFilter] = useState<string[]>([]);
+  const [quarterFilter, setQuarterFilter] = useState<string[]>([]);
+  const [yearFilter, setYearFilter] = useState<string[]>([]);
   const [showMilestonesOnly, setShowMilestonesOnly] = useState(false);
   const [showAchievedOnly, setShowAchievedOnly] = useState(false);
+  const [showNonAchievedOnly, setShowNonAchievedOnly] = useState(true);
 
   const getQuarter = (dateStr: string) => {
     const month = new Date(dateStr).getMonth();
     return Math.floor(month / 3) + 1;
   };
 
-  const filterOptions = useMemo(() => {
+  const getWeekCommencing = (dateStr: string) => {
+    const d = new Date(dateStr);
+    const day = d.getDay();
+    const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+    const monday = new Date(d.setDate(diff));
+    return monday.toISOString().split('T')[0];
+  };
+
+  const options = useMemo(() => {
+    const weeks = new Set<string>();
     const months = new Set<string>();
     const quarters = new Set<string>();
     const years = new Set<string>();
 
     logs.forEach(log => {
+      weeks.add(getWeekCommencing(log.date));
       months.add(log.date.substring(0, 7));
       quarters.add(`Q${getQuarter(log.date)}`);
       years.add(new Date(log.date).getFullYear().toString());
     });
 
-    let movesToShow: { id: string, title: string }[] = [];
-    if (goalFilter === 'all') {
-      const uniqueMoveTitles = new Set<string>();
-      goals.forEach(g => g.majorMoves.forEach(m => uniqueMoveTitles.add(m.title)));
-      movesToShow = Array.from(uniqueMoveTitles).map(title => ({ id: title, title }));
-    } else {
-      const selectedGoal = goals.find(g => g.id === goalFilter);
-      movesToShow = selectedGoal?.majorMoves.map(m => ({ id: m.id, title: m.title })) || [];
-    }
+    // Determine relevant moves based on selected goals
+    const uniqueMoveTitles = new Set<string>();
+    const relevantGoals = goalFilter.length === 0 
+      ? goals 
+      : goals.filter(g => goalFilter.includes(g.id));
+    
+    relevantGoals.forEach(g => g.majorMoves.forEach(m => uniqueMoveTitles.add(m.title)));
 
     return {
-      months: Array.from(months).sort().reverse(),
-      quarters: Array.from(quarters).sort(),
-      years: Array.from(years).sort().reverse(),
-      moves: movesToShow
+      goals: goals.map(g => ({ id: g.id, label: g.title })),
+      moves: Array.from(uniqueMoveTitles).map(title => ({ id: title, label: title })),
+      weeks: Array.from(weeks).sort().reverse().map(w => ({ id: w, label: w })),
+      months: Array.from(months).sort().reverse().map(m => ({ id: m, label: m })),
+      quarters: Array.from(quarters).sort().map(q => ({ id: q, label: q })),
+      years: Array.from(years).sort().reverse().map(y => ({ id: y, label: y })),
     };
   }, [logs, goals, goalFilter]);
+
+  // Clean up move filter if selected moves no longer exist in current filtered goal context
+  useEffect(() => {
+    const validMoveIds = new Set(options.moves.map(m => m.id));
+    const nextMoves = moveFilter.filter(id => validMoveIds.has(id));
+    if (nextMoves.length !== moveFilter.length) {
+      setMoveFilter(nextMoves);
+    }
+  }, [options.moves]);
 
   const filteredLogs = useMemo(() => {
     return logs.filter(log => {
       const goal = goals.find(g => g.id === log.goalId);
-      const matchGoal = goalFilter === 'all' || log.goalId === goalFilter;
-      let matchMove = moveFilter === 'all';
-      if (!matchMove) {
-        if (goalFilter === 'all') {
-          const move = goal?.majorMoves.find(m => m.id === log.moveId);
-          matchMove = move?.title === moveFilter;
-        } else {
-          matchMove = log.moveId === moveFilter;
-        }
-      }
-      const matchMonth = monthFilter === 'all' || log.date.startsWith(monthFilter);
-      const matchQuarter = quarterFilter === 'all' || `Q${getQuarter(log.date)}` === quarterFilter;
-      const matchYear = yearFilter === 'all' || log.date.startsWith(yearFilter);
+      const move = goal?.majorMoves.find(m => m.id === log.moveId);
+
+      const matchGoal = goalFilter.length === 0 || goalFilter.includes(log.goalId);
+      const matchMove = moveFilter.length === 0 || (move && moveFilter.includes(move.title));
+      const matchWeek = weekFilter.length === 0 || weekFilter.includes(getWeekCommencing(log.date));
+      const matchMonth = monthFilter.length === 0 || monthFilter.some(m => log.date.startsWith(m));
+      const matchQuarter = quarterFilter.length === 0 || quarterFilter.includes(`Q${getQuarter(log.date)}`);
+      const matchYear = yearFilter.length === 0 || yearFilter.some(y => log.date.startsWith(y));
+      
       const matchMilestone = !showMilestonesOnly || log.isMilestone;
       const matchAchieved = !showAchievedOnly || (goal?.isAchieved || false);
+      const matchNonAchieved = !showNonAchievedOnly || !(goal?.isAchieved || false);
       
-      return matchGoal && matchMove && matchMonth && matchQuarter && matchYear && matchMilestone && matchAchieved;
+      return matchGoal && matchMove && matchWeek && matchMonth && matchQuarter && matchYear && matchMilestone && matchAchieved && matchNonAchieved;
     });
-  }, [logs, goals, goalFilter, moveFilter, monthFilter, quarterFilter, yearFilter, showMilestonesOnly, showAchievedOnly]);
+  }, [logs, goals, goalFilter, moveFilter, weekFilter, monthFilter, quarterFilter, yearFilter, showMilestonesOnly, showAchievedOnly, showNonAchievedOnly]);
 
   const metrics = useMemo(() => {
     const uniqueMovesCount = new Set(filteredLogs.map(l => l.moveId)).size;
     const milestoneCount = filteredLogs.filter(l => l.isMilestone).length;
 
     const now = new Date();
-    const curYear = now.getFullYear();
-    const curMonth = now.getMonth();
-    
-    const curMonthStr = `${curYear}-${String(curMonth + 1).padStart(2, '0')}`;
-    const prevMonthDate = new Date(curYear, curMonth - 1, 1);
+    const curMonthStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const prevMonthDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
     const prevMonthStr = `${prevMonthDate.getFullYear()}-${String(prevMonthDate.getMonth() + 1).padStart(2, '0')}`;
 
     const getMonthHours = (monthStr: string) => {
       return logs
         .filter(l => {
           const goal = goals.find(g => g.id === l.goalId);
-          const basicMatch = l.date.startsWith(monthStr) && (goalFilter === 'all' || l.goalId === goalFilter);
+          const basicMatch = l.date.startsWith(monthStr);
           const achievedMatch = !showAchievedOnly || (goal?.isAchieved || false);
-          return basicMatch && achievedMatch;
+          const nonAchievedMatch = !showNonAchievedOnly || !(goal?.isAchieved || false);
+          return basicMatch && achievedMatch && nonAchievedMatch;
         })
         .reduce((acc, l) => acc + l.hours + l.minutes / 60, 0);
     };
@@ -114,33 +202,22 @@ const Summary: React.FC<SummaryProps> = ({ goals, logs, onDeleteLog, onEditLog }
       percentDiff: parseFloat(percentDiff.toFixed(1)),
       trend: hourDiff >= 0 ? 'up' : 'down'
     };
-  }, [filteredLogs, logs, goals, goalFilter, showAchievedOnly]);
+  }, [filteredLogs, logs, goals, showAchievedOnly, showNonAchievedOnly]);
 
   const handleExportCSV = () => {
     if (filteredLogs.length === 0) return;
     const headers = ["Date", "Goal", "Major Move", "Activity", "Hours", "Minutes", "Is Milestone"];
-    const rows = filteredLogs.map(log => {
+    const csvContent = [headers, ...filteredLogs.map(log => {
       const goal = goals.find(g => g.id === log.goalId);
       const move = goal?.majorMoves.find(m => m.id === log.moveId);
-      return [
-        log.date,
-        `"${goal?.title || 'Unknown'}"`,
-        `"${move?.title || 'Unknown'}"`,
-        `"${(log.activityDescription || '').replace(/"/g, '""')}"`,
-        log.hours,
-        log.minutes,
-        log.isMilestone ? "Yes" : "No"
-      ];
-    });
-    const csvContent = [headers, ...rows].map(e => e.join(",")).join("\n");
+      return [log.date, `"${goal?.title}"`, `"${move?.title}"`, `"${(log.activityDescription || '').replace(/"/g, '""')}"`, log.hours, log.minutes, log.isMilestone ? "Yes" : "No"];
+    })].map(e => e.join(",")).join("\n");
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
-    link.setAttribute("href", url);
-    link.setAttribute("download", `goalkeeper_export_${new Date().toISOString().split('T')[0]}.csv`);
-    document.body.appendChild(link);
+    link.href = url;
+    link.download = `goalkeeper_export_${new Date().toISOString().split('T')[0]}.csv`;
     link.click();
-    document.body.removeChild(link);
   };
 
   const chartData = useMemo(() => {
@@ -151,11 +228,8 @@ const Summary: React.FC<SummaryProps> = ({ goals, logs, onDeleteLog, onEditLog }
       const duration = log.hours + log.minutes / 60;
       let key = goal.title;
       if (view === 'day') key = log.date;
-      else if (view === 'week') {
-        const d = new Date(log.date);
-        const firstDay = new Date(d.setDate(d.getDate() - d.getDay()));
-        key = `W/C ${firstDay.toISOString().split('T')[0]}`;
-      } else if (view === 'month') key = log.date.substring(0, 7);
+      else if (view === 'week') key = `W/C ${getWeekCommencing(log.date)}`;
+      else if (view === 'month') key = log.date.substring(0, 7);
       else if (view === 'quarter') key = `${new Date(log.date).getFullYear()}-Q${getQuarter(log.date)}`;
       else if (view === 'year') key = new Date(log.date).getFullYear().toString();
       dataMap[key] = (dataMap[key] || 0) + duration;
@@ -165,26 +239,25 @@ const Summary: React.FC<SummaryProps> = ({ goals, logs, onDeleteLog, onEditLog }
       .sort((a, b) => a.name.localeCompare(b.name));
   }, [filteredLogs, goals, view]);
 
-  const totalFilteredHours = useMemo(() => {
-    return filteredLogs.reduce((acc, log) => acc + log.hours + log.minutes / 60, 0).toFixed(1);
-  }, [filteredLogs]);
+  const totalFilteredHours = useMemo(() => filteredLogs.reduce((acc, log) => acc + log.hours + log.minutes / 60, 0).toFixed(1), [filteredLogs]);
 
   const resetFilters = () => {
-    setGoalFilter('all');
-    setMoveFilter('all');
-    setMonthFilter('all');
-    setQuarterFilter('all');
-    setYearFilter('all');
+    setGoalFilter([]);
+    setMoveFilter([]);
+    setWeekFilter([]);
+    setMonthFilter([]);
+    setQuarterFilter([]);
+    setYearFilter([]);
     setShowMilestonesOnly(false);
     setShowAchievedOnly(false);
+    setShowNonAchievedOnly(true);
   };
 
-  const isFiltered = goalFilter !== 'all' || moveFilter !== 'all' || monthFilter !== 'all' || quarterFilter !== 'all' || yearFilter !== 'all' || showMilestonesOnly || showAchievedOnly;
+  const isFiltered = goalFilter.length > 0 || moveFilter.length > 0 || weekFilter.length > 0 || monthFilter.length > 0 || quarterFilter.length > 0 || yearFilter.length > 0 || showMilestonesOnly || showAchievedOnly || !showNonAchievedOnly;
   const COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'];
 
   return (
     <div className="space-y-6">
-      {/* Metric Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
           <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Active Moves</p>
@@ -237,58 +310,38 @@ const Summary: React.FC<SummaryProps> = ({ goals, logs, onDeleteLog, onEditLog }
 
         <div className="space-y-4 mb-8 p-4 bg-slate-50 rounded-xl border border-slate-100">
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
-            <div>
-              <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Filter by Goal</label>
-              <select value={goalFilter} onChange={(e) => { setGoalFilter(e.target.value); setMoveFilter('all'); }} className="w-full text-xs bg-white border border-slate-200 rounded-md p-2 outline-none focus:ring-2 focus:ring-indigo-500/20">
-                <option value="all">All Goals</option>
-                {goals.map(g => <option key={g.id} value={g.id}>{g.title}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Filter by Move</label>
-              <select value={moveFilter} onChange={(e) => setMoveFilter(e.target.value)} className="w-full text-xs bg-white border border-slate-200 rounded-md p-2 outline-none focus:ring-2 focus:ring-indigo-500/20">
-                <option value="all">Any Move</option>
-                {filterOptions.moves.map(m => <option key={m.id} value={m.id}>{m.title}</option>)}
-              </select>
-            </div>
+            <MultiSelect label="Goals" options={options.goals} selected={goalFilter} onChange={setGoalFilter} />
+            <MultiSelect 
+              label={`Moves ${goalFilter.length > 0 ? '(Filtered)' : ''}`} 
+              options={options.moves} 
+              selected={moveFilter} 
+              onChange={setMoveFilter} 
+            />
             <div className="flex items-end">
               <label className="flex items-center gap-2 text-[10px] font-semibold text-slate-600 cursor-pointer p-2 bg-white rounded-md border border-slate-200 w-full h-9">
                 <input type="checkbox" checked={showMilestonesOnly} onChange={(e) => setShowMilestonesOnly(e.target.checked)} className="h-4 w-4 rounded text-indigo-600" />
                 <span>Show Milestones Only</span>
               </label>
             </div>
-            <div className="flex items-end">
-              <label className="flex items-center gap-2 text-[10px] font-semibold text-slate-600 cursor-pointer p-2 bg-white rounded-md border border-slate-200 w-full h-9">
-                <input type="checkbox" checked={showAchievedOnly} onChange={(e) => setShowAchievedOnly(e.target.checked)} className="h-4 w-4 rounded text-emerald-600" />
-                <span>Show Achieved Only</span>
+            <div className="flex items-end gap-2">
+              <label className="flex-1 flex items-center gap-2 text-[10px] font-semibold text-slate-600 cursor-pointer p-2 bg-white rounded-md border border-slate-200 h-9">
+                <input type="checkbox" checked={showAchievedOnly} onChange={(e) => { setShowAchievedOnly(e.target.checked); if (e.target.checked) setShowNonAchievedOnly(false); }} className="h-4 w-4 rounded text-emerald-600" />
+                <span>Achieved Only</span>
+              </label>
+              <label className="flex-1 flex items-center gap-2 text-[10px] font-semibold text-slate-600 cursor-pointer p-2 bg-white rounded-md border border-slate-200 h-9">
+                <input type="checkbox" checked={showNonAchievedOnly} onChange={(e) => { setShowNonAchievedOnly(e.target.checked); if (e.target.checked) setShowAchievedOnly(false); }} className="h-4 w-4 rounded text-indigo-600" />
+                <span>In-Progress Only</span>
               </label>
             </div>
           </div>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <div>
-              <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Month</label>
-              <select value={monthFilter} onChange={(e) => setMonthFilter(e.target.value)} className="w-full text-xs bg-white border border-slate-200 rounded-md p-2 outline-none focus:ring-2 focus:ring-indigo-500/20">
-                <option value="all">Any Month</option>
-                {filterOptions.months.map(m => <option key={m} value={m}>{m}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Quarter</label>
-              <select value={quarterFilter} onChange={(e) => setQuarterFilter(e.target.value)} className="w-full text-xs bg-white border border-slate-200 rounded-md p-2 outline-none focus:ring-2 focus:ring-indigo-500/20">
-                <option value="all">Any Quarter</option>
-                {filterOptions.quarters.map(q => <option key={q} value={q}>{q}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Year</label>
-              <select value={yearFilter} onChange={(e) => setYearFilter(e.target.value)} className="w-full text-xs bg-white border border-slate-200 rounded-md p-2 outline-none focus:ring-2 focus:ring-indigo-500/20">
-                <option value="all">Any Year</option>
-                {filterOptions.years.map(y => <option key={y} value={y}>{y}</option>)}
-              </select>
-            </div>
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+            <MultiSelect label="Week (Mon)" options={options.weeks} selected={weekFilter} onChange={setWeekFilter} />
+            <MultiSelect label="Month" options={options.months} selected={monthFilter} onChange={setMonthFilter} />
+            <MultiSelect label="Quarter" options={options.quarters} selected={quarterFilter} onChange={setQuarterFilter} />
+            <MultiSelect label="Year" options={options.years} selected={yearFilter} onChange={setYearFilter} />
             <div className="flex items-end">
               {isFiltered && (
-                <button onClick={resetFilters} className="w-full text-[10px] font-bold text-indigo-600 hover:text-indigo-800 border border-indigo-200 hover:bg-indigo-50 rounded-md p-2 uppercase transition-colors">Clear All Filters</button>
+                <button onClick={resetFilters} className="w-full text-[10px] font-bold text-indigo-600 hover:text-indigo-800 border border-indigo-200 hover:bg-indigo-50 rounded-md p-2 uppercase transition-colors">Clear All</button>
               )}
             </div>
           </div>
@@ -321,11 +374,7 @@ const Summary: React.FC<SummaryProps> = ({ goals, logs, onDeleteLog, onEditLog }
             <h3 className="text-lg font-bold text-slate-800">Detailed Activity Log</h3>
             <span className="text-xs font-semibold px-2.5 py-1 bg-slate-100 text-slate-600 rounded-full">{filteredLogs.length} entries</span>
           </div>
-          <button 
-            onClick={handleExportCSV}
-            disabled={filteredLogs.length === 0}
-            className="flex items-center gap-2 px-3 py-1.5 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg text-xs font-bold transition-colors border border-emerald-200"
-          >
+          <button onClick={handleExportCSV} disabled={filteredLogs.length === 0} className="flex items-center gap-2 px-3 py-1.5 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg text-xs font-bold transition-colors border border-emerald-200">
             <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
             </svg>
@@ -353,37 +402,20 @@ const Summary: React.FC<SummaryProps> = ({ goals, logs, onDeleteLog, onEditLog }
                     <tr key={log.id} className="hover:bg-indigo-50/30 transition-colors">
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-600">{log.date}</td>
                       <td className="px-6 py-4">
-                        <div className="text-sm font-bold text-slate-800">
-                          {goal?.title}
-                          {goal?.isAchieved && (
-                            <span className="ml-2 text-[8px] bg-emerald-100 text-emerald-700 px-1 py-0.5 rounded uppercase font-black">Achieved</span>
-                          )}
-                        </div>
+                        <div className="text-sm font-bold text-slate-800">{goal?.title} {goal?.isAchieved && <span className="ml-2 text-[8px] bg-emerald-100 text-emerald-700 px-1 py-0.5 rounded uppercase font-black">Achieved</span>}</div>
                         <div className="text-xs text-indigo-500 font-medium">{move?.title}</div>
                       </td>
                       <td className="px-6 py-4 text-sm text-slate-600">
                         <div className="flex items-center gap-2">
-                          {log.isMilestone && (
-                            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-black bg-amber-100 text-amber-700 uppercase border border-amber-200">
-                              ★ Milestone
-                            </span>
-                          )}
+                          {log.isMilestone && <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-black bg-amber-100 text-amber-700 uppercase border border-amber-200">★ Milestone</span>}
                           <span className="truncate max-w-[200px]">{log.activityDescription || '-'}</span>
                         </div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm font-bold text-slate-700">{log.hours}h {log.minutes}m</td>
                       <td className="px-6 py-4 whitespace-nowrap text-right">
                         <div className="flex justify-end gap-2">
-                          <button onClick={() => onEditLog(log)} className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition" title="Edit Log">
-                            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
-                              <path d="M13.586 3.586a2 2 0 112.828 2.828l-.707.707-2.828-2.828.707-.707zM11.36 6.75l2.828 2.828-7.328 7.328a4 4 0 01-1.207.879l-3.203 1.355a.5.5 0 01-.652-.652l1.355-3.203a4 4 0 01.879-1.207L11.36 6.75z" />
-                            </svg>
-                          </button>
-                          <button onClick={() => onDeleteLog(log.id)} className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded transition" title="Delete Log">
-                            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
-                              <path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clipRule="evenodd" />
-                            </svg>
-                          </button>
+                          <button onClick={() => onEditLog(log)} className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition"><svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"><path d="M13.586 3.586a2 2 0 112.828 2.828l-.707.707-2.828-2.828.707-.707zM11.36 6.75l2.828 2.828-7.328 7.328a4 4 0 01-1.207.879l-3.203 1.355a.5.5 0 01-.652-.652l1.355-3.203a4 4 0 01.879-1.207L11.36 6.75z" /></svg></button>
+                          <button onClick={() => onDeleteLog(log.id)} className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded transition"><svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clipRule="evenodd" /></svg></button>
                         </div>
                       </td>
                     </tr>
