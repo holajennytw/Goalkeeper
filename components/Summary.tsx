@@ -1,7 +1,7 @@
 
 import React, { useMemo, useState, useEffect } from 'react';
 import { Goal, LogEntry, TimeView } from '../types';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, LabelList } from 'recharts';
 
 interface SummaryProps {
   goals: Goal[];
@@ -122,7 +122,6 @@ const Summary: React.FC<SummaryProps> = ({ goals, logs, onDeleteLog, onEditLog }
       years.add(new Date(log.date).getFullYear().toString());
     });
 
-    // Determine relevant moves based on selected goals
     const uniqueMoveTitles = new Set<string>();
     const relevantGoals = goalFilter.length === 0 
       ? goals 
@@ -140,7 +139,6 @@ const Summary: React.FC<SummaryProps> = ({ goals, logs, onDeleteLog, onEditLog }
     };
   }, [logs, goals, goalFilter]);
 
-  // Clean up move filter if selected moves no longer exist in current filtered goal context
   useEffect(() => {
     const validMoveIds = new Set(options.moves.map(m => m.id));
     const nextMoves = moveFilter.filter(id => validMoveIds.has(id));
@@ -172,6 +170,7 @@ const Summary: React.FC<SummaryProps> = ({ goals, logs, onDeleteLog, onEditLog }
   const metrics = useMemo(() => {
     const uniqueMovesCount = new Set(filteredLogs.map(l => l.moveId)).size;
     const milestoneCount = filteredLogs.filter(l => l.isMilestone).length;
+    const logsCount = filteredLogs.length;
 
     const now = new Date();
     const curMonthStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
@@ -198,11 +197,91 @@ const Summary: React.FC<SummaryProps> = ({ goals, logs, onDeleteLog, onEditLog }
     return {
       uniqueMovesCount,
       milestoneCount,
+      logsCount,
       hourDiff: parseFloat(hourDiff.toFixed(1)),
-      percentDiff: parseFloat(percentDiff.toFixed(1)),
+      percentDiff: Math.round(percentDiff),
       trend: hourDiff >= 0 ? 'up' : 'down'
     };
   }, [filteredLogs, logs, goals, showAchievedOnly, showNonAchievedOnly]);
+
+  const chartData = useMemo(() => {
+    const dataMap: Record<string, { hours: number, count: number }> = {};
+    filteredLogs.forEach(log => {
+      const goal = goals.find(g => g.id === log.goalId);
+      if (!goal) return;
+      const duration = log.hours + log.minutes / 60;
+      let key = goal.title;
+      if (view === 'day') key = log.date;
+      else if (view === 'week') key = `W/C ${getWeekCommencing(log.date)}`;
+      else if (view === 'month') key = log.date.substring(0, 7);
+      else if (view === 'quarter') key = `${new Date(log.date).getFullYear()}-Q${getQuarter(log.date)}`;
+      else if (view === 'year') key = new Date(log.date).getFullYear().toString();
+      
+      if (!dataMap[key]) dataMap[key] = { hours: 0, count: 0 };
+      dataMap[key].hours += duration;
+      dataMap[key].count += 1;
+    });
+
+    const sortedData = Object.entries(dataMap)
+      .map(([name, stats]) => ({ 
+        name, 
+        hours: parseFloat(stats.hours.toFixed(2)), 
+        count: stats.count,
+        trend: null as number | null 
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+
+    // Calculate effort trend per timeframe relative to previous bar
+    if (view !== 'total') {
+      for (let i = 1; i < sortedData.length; i++) {
+        const prev = sortedData[i-1].hours;
+        const curr = sortedData[i].hours;
+        if (prev > 0) {
+          sortedData[i].trend = Math.round(((curr - prev) / prev) * 100);
+        }
+      }
+    }
+
+    return sortedData;
+  }, [filteredLogs, goals, view]);
+
+  // Recharts Custom Label Component
+  const CustomBarLabel = (props: any) => {
+    const { x, y, width, value, index } = props;
+    
+    // Look up data point from source array using the index provided by Recharts
+    const dataPoint = chartData[index];
+    if (!dataPoint || value === 0) return null;
+    
+    const { count, trend, hours } = dataPoint;
+
+    return (
+      <g>
+        <text 
+          x={x + width / 2} 
+          y={y - 8} 
+          fill="#64748b" 
+          textAnchor="middle" 
+          fontSize={9} 
+          fontWeight="bold"
+          className="select-none pointer-events-none"
+        >
+          {/* Line 1: Logs count */}
+          <tspan x={x + width / 2} dy="-2.4em">{count} {count === 1 ? 'log' : 'logs'}</tspan>
+          {/* Line 2: Hours count */}
+          <tspan x={x + width / 2} dy="1.2em">{hours}h</tspan>
+          {/* Line 3: Trend in parentheses */}
+          {trend !== undefined && trend !== null && (
+            <tspan x={x + width / 2} dy="1.2em" fill={trend >= 0 ? '#10b981' : '#f43f5e'}>
+              ({trend >= 0 ? '↑' : '↓'}{Math.abs(trend)}%)
+            </tspan>
+          )}
+        </text>
+      </g>
+    );
+  };
+
+  const totalFilteredHours = useMemo(() => filteredLogs.reduce((acc, log) => acc + log.hours + log.minutes / 60, 0).toFixed(1), [filteredLogs]);
 
   const handleExportCSV = () => {
     if (filteredLogs.length === 0) return;
@@ -219,27 +298,6 @@ const Summary: React.FC<SummaryProps> = ({ goals, logs, onDeleteLog, onEditLog }
     link.download = `goalkeeper_export_${new Date().toISOString().split('T')[0]}.csv`;
     link.click();
   };
-
-  const chartData = useMemo(() => {
-    const dataMap: Record<string, number> = {};
-    filteredLogs.forEach(log => {
-      const goal = goals.find(g => g.id === log.goalId);
-      if (!goal) return;
-      const duration = log.hours + log.minutes / 60;
-      let key = goal.title;
-      if (view === 'day') key = log.date;
-      else if (view === 'week') key = `W/C ${getWeekCommencing(log.date)}`;
-      else if (view === 'month') key = log.date.substring(0, 7);
-      else if (view === 'quarter') key = `${new Date(log.date).getFullYear()}-Q${getQuarter(log.date)}`;
-      else if (view === 'year') key = new Date(log.date).getFullYear().toString();
-      dataMap[key] = (dataMap[key] || 0) + duration;
-    });
-    return Object.entries(dataMap)
-      .map(([name, hours]) => ({ name, hours: parseFloat(hours.toFixed(2)) }))
-      .sort((a, b) => a.name.localeCompare(b.name));
-  }, [filteredLogs, goals, view]);
-
-  const totalFilteredHours = useMemo(() => filteredLogs.reduce((acc, log) => acc + log.hours + log.minutes / 60, 0).toFixed(1), [filteredLogs]);
 
   const resetFilters = () => {
     setGoalFilter([]);
@@ -274,24 +332,20 @@ const Summary: React.FC<SummaryProps> = ({ goals, logs, onDeleteLog, onEditLog }
           </div>
         </div>
         <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
-          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">MoM Change (Time)</p>
-          <div className="flex items-baseline gap-1">
-            <span className={`text-2xl font-black ${metrics.trend === 'up' ? 'text-emerald-600' : 'text-rose-500'}`}>
-              {metrics.hourDiff > 0 ? '+' : ''}{metrics.hourDiff}h
-            </span>
-            <span className="text-[10px] text-slate-400 font-medium">vs last mo.</span>
+          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Activity Logs</p>
+          <div className="flex items-baseline gap-2">
+            <span className="text-3xl font-black text-slate-800">{metrics.logsCount}</span>
+            <span className="text-[10px] text-slate-400 font-bold ml-1">ENTRIES</span>
           </div>
         </div>
         <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
-          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Effort Trend</p>
+          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Growth Trend</p>
           <div className="flex items-baseline gap-1">
             <span className={`text-2xl font-black ${metrics.trend === 'up' ? 'text-emerald-600' : 'text-rose-500'}`}>
-              {metrics.percentDiff > 0 ? '+' : ''}{metrics.percentDiff}%
+              {metrics.hourDiff > 0 ? '+' : ''}{metrics.hourDiff}h ({metrics.percentDiff > 0 ? '+' : ''}{metrics.percentDiff}%)
             </span>
-            <svg xmlns="http://www.w3.org/2000/svg" className={`h-4 w-4 ${metrics.trend === 'up' ? 'text-emerald-500' : 'text-rose-500'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d={metrics.trend === 'up' ? "M5 10l7-7m0 0l7 7m-7-7v18" : "M19 14l-7 7m0 0l-7-7m7 7V3"} />
-            </svg>
           </div>
+          <p className="text-[9px] text-slate-400 font-bold uppercase mt-1">vs last month</p>
         </div>
       </div>
 
@@ -347,15 +401,16 @@ const Summary: React.FC<SummaryProps> = ({ goals, logs, onDeleteLog, onEditLog }
           </div>
         </div>
 
-        <div className="h-64 w-full">
+        <div className="h-80 w-full">
           {chartData.length > 0 ? (
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={chartData}>
+              <BarChart data={chartData} margin={{ top: 60, bottom: 20 }}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
                 <XAxis dataKey="name" fontSize={10} tickLine={false} axisLine={false} />
                 <YAxis fontSize={10} tickLine={false} axisLine={false} unit="h" />
-                <Tooltip cursor={{ fill: '#f1f5f9' }} contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)', fontSize: '12px' }} />
+                {/* Removed Tooltip to eliminate hover popup */}
                 <Bar dataKey="hours" radius={[4, 4, 0, 0]}>
+                  <LabelList content={<CustomBarLabel />} />
                   {chartData.map((entry, index) => <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />)}
                 </Bar>
               </BarChart>
