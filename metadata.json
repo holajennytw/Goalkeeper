@@ -1,5 +1,8 @@
 {
   "name": "GoalKeeper_link to Supabase",
   "description": "A comprehensive goal tracking application designed to help users define major moves, track daily activities with precise duration logging, and visualize progress through advanced summaries.",
-  "requestFramePermissions": []
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
 }
