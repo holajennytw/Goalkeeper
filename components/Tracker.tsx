@@ -19,6 +19,9 @@ const Tracker: React.FC<TrackerProps> = ({ goals, onAddLog, editingLog, onCancel
   const [isMilestone, setIsMilestone] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
 
+  // Only show goals that are on-going (not achieved), unless editing a log associated with an achieved goal
+  const availableGoals = goals.filter(g => !g.isAchieved || (editingLog && g.id === editingLog.goalId));
+
   useEffect(() => {
     if (editingLog) {
       setSelectedGoalId(editingLog.goalId);
@@ -30,6 +33,14 @@ const Tracker: React.FC<TrackerProps> = ({ goals, onAddLog, editingLog, onCancel
       setIsMilestone(editingLog.isMilestone || false);
     }
   }, [editingLog]);
+
+  // Reset selected goal if it is no longer available (e.g. marked as achieved)
+  useEffect(() => {
+    if (selectedGoalId && !availableGoals.some(g => g.id === selectedGoalId)) {
+      setSelectedGoalId('');
+      setSelectedMoveId('');
+    }
+  }, [goals, editingLog, selectedGoalId, availableGoals]);
 
   const selectedGoal = goals.find(g => g.id === selectedGoalId);
 
@@ -101,9 +112,12 @@ const Tracker: React.FC<TrackerProps> = ({ goals, onAddLog, editingLog, onCancel
               required
             >
               <option value="">Choose a Goal...</option>
-              {goals.map(g => (
+              {availableGoals.map(g => (
                 <option key={g.id} value={g.id}>{g.title}</option>
               ))}
+              {availableGoals.length === 0 && (
+                <option value="" disabled>No on-going goals available</option>
+              )}
             </select>
           </div>
 
